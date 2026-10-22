@@ -4,6 +4,8 @@ import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLock
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache, getAntigravityModelQuota } from "./antigravityQuota.js";
+import { resolveSessionId } from "open-sse/utils/sessionManager.js";
+import crypto from "crypto";
 import * as log from "../utils/logger.js";
 
 // Mutex to prevent race conditions during account selection
@@ -155,6 +157,31 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
     if (connection) {
       // skip strategy
+    } else if (strategy === "session-sticky" || strategy === "sticky") {
+      let sessionId = null;
+      try {
+        sessionId = resolveSessionId({
+          headers: options?.headers,
+          body: options?.body,
+          scope: providerId,
+        });
+      } catch {
+        sessionId = null;
+      }
+
+      if (sessionId && availableConnections.length > 0) {
+        // Deterministic hash of session ID across available accounts
+        const hashNum = crypto.createHash("sha256").update(String(sessionId)).digest().readUInt32BE(0);
+        const index = hashNum % availableConnections.length;
+        connection = availableConnections[index];
+        log.info("AUTH", `${provider} | sticky session ${sessionId.slice(0, 16)}... mapped to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
+        updateProviderConnection(connection.id, {
+          lastUsedAt: new Date().toISOString(),
+          consecutiveUseCount: (connection.consecutiveUseCount || 0) + 1
+        }).catch(() => {});
+      } else {
+        connection = availableConnections[0];
+      }
     } else if (strategy === "round-robin") {
       const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
 

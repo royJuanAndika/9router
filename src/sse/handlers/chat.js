@@ -244,7 +244,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastHeaders = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model });
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
+      requestedModel: requestedModel || model,
+      headers: clientRawRequest?.headers || request?.headers,
+      body,
+    });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
